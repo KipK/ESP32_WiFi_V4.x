@@ -237,9 +237,10 @@ void buildStatus(DynamicJsonDocument &doc) {
 
   doc["solar"] = solar;
   doc["grid_ie"] = grid_ie;
-  doc["charge_rate"] = charge_rate;
-  doc["divert_update"] = (millis() - lastUpdate) / 1000;
-  doc["divert_active"] = divert_active;
+
+  doc["charge_rate"] = divert.getChargeRate();
+  doc["divert_update"] = (millis() - divert.getLastUpdate()) / 1000;
+  doc["divert_active"] = divert.isActive();
 
   doc["shaper"] = shaper.isActive();
   doc["shaper_live_pwr"] = shaper.getLivePwr();
