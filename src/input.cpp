@@ -74,10 +74,7 @@ class InputTask : public MicroTasks::Task
         event["elapsed"] = evse.getSessionElapsed();
         event["amp"] = evse.getAmps() * AMPS_SCALE_FACTOR;
         event["voltage"] = evse.getVoltage() * VOLTS_SCALE_FACTOR;
-
         event_send(event);
-        // update /override topic to mqtt
-        mqtt_publish_override();
       }
 
       return MicroTask.Infinate;
