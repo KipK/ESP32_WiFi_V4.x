@@ -280,7 +280,7 @@ bool EvseManager::evaluateClaims(EvseProperties &properties)
     }
   }
 
-return foundClaim;
+  return foundClaim;
 }
 
 void EvseManager::setup()
