@@ -6,6 +6,14 @@ CurrentShaperTask shaper;
 CurrentShaperTask::CurrentShaperTask() : MicroTasks::Task() {
 	_changed = false;
 	_enabled = false;
+	_max_pwr = 0;
+	_live_pwr = 0;
+	_smoothed_live_pwr = 0;
+	_chg_cur = 0;
+	_max_cur = 0;
+	_pause_timer = 0;
+	_timer = 0;
+	_updated = false;
 }
 
 CurrentShaperTask::~CurrentShaperTask() {
@@ -18,42 +26,64 @@ void CurrentShaperTask::setup() {
 }
 
 unsigned long CurrentShaperTask::loop(MicroTasks::WakeReason reason) {
+	
 	if (_enabled) {
 			EvseProperties props;
 			if (_changed) {
 				props.setMaxCurrent(_max_cur);
-				if (_max_cur < evse.getMinCurrent() ) {
+				if (_max_cur < evse.getMinCurrent()) {
 					// pause temporary, not enough amps available
 					props.setState(EvseState::Disabled);
+					if (!_pause_timer)
+					{
+						_pause_timer = millis();
+					}
+						
 				}
-				else {
+				else if (millis() - _pause_timer >= current_shaper_min_pause_time * 1000)
+				{
+					_pause_timer = 0;
 					props.setState(EvseState::None);
 				}
-				_changed = false;
-				_updated = true;
 				_timer = millis();
-				evse.claim(EvseClient_OpenEVSE_Shaper,EvseManager_Priority_Safety, props);
-				StaticJsonDocument<128> event;
-				event["shaper"]  = 1;
-				event["shaper_live_pwr"] = _live_pwr;
-				event["shaper_max_pwr"] = _max_pwr;
-				event["shaper_cur"]	     = _max_cur;
-				event["shaper_updated"] = _updated;
-				event_send(event);
+				_changed = false;
+				// claim only if we have change
+				if (evse.getState() != props.getState() || evse.getChargeCurrent() != props.getChargeCurrent())
+				{
+					evse.claim(EvseClient_OpenEVSE_Shaper, EvseManager_Priority_Safety, props);
+					StaticJsonDocument<128> event;
+					event["shaper"] = 1;
+					event["shaper_live_pwr"] = _live_pwr;
+					event["shaper_smoothed_live_pwr"] = _smoothed_live_pwr;
+					event["shaper_max_pwr"] = _max_pwr;
+					event["shaper_cur"] = _max_cur;
+					event["shaper_updated"] = _updated;
+					event_send(event);
+				}
 			}
-			if (millis() - _timer > EVSE_SHAPER_FAILSAFE_TIME) {
+			else if ( !_updated || millis() - _timer > current_shaper_data_maxinterval * 1000 )
+			{
 				//available power has not been updated since EVSE_SHAPER_FAILSAFE_TIME, pause charge
 				DBUGF("shaper_live_pwr has not been updated in time, pausing charge");
-				_updated = false;
-				props.setState(EvseState::Disabled);
-				evse.claim(EvseClient_OpenEVSE_Shaper,EvseManager_Priority_Limit, props);
-				StaticJsonDocument<128> event;
-				event["shaper"]  = 1;
-				event["shaper_live_pwr"] = _live_pwr;
-				event["shaper_max_pwr"] = _max_pwr;
-				event["shaper_cur"]	     = _max_cur;
-				event["shaper_updated"] = _updated;
-				event_send(event);
+
+				if (_updated) {
+					_pause_timer = millis();
+					_updated = false;
+				}
+				
+				if (evse.getState(EvseClient_OpenEVSE_Shaper) != EvseState::Disabled)
+				{
+					props.setState(EvseState::Disabled);
+					evse.claim(EvseClient_OpenEVSE_Shaper, EvseManager_Priority_Limit, props);
+					StaticJsonDocument<128> event;
+					event["shaper"] = 1;
+					event["shaper_live_pwr"] = _live_pwr;
+					event["shaper_smoothed_live_pwr"] = _smoothed_live_pwr;
+					event["shaper_max_pwr"] = _max_pwr;
+					event["shaper_cur"] = _max_cur;
+					event["shaper_updated"] = _updated;
+					event_send(event);
+				}
 			}
 	}
 	else {
@@ -73,8 +103,9 @@ void CurrentShaperTask::begin(EvseManager &evse) {
 	this -> _evse    = &evse;
 	this -> _max_pwr = current_shaper_max_pwr; 
 	this -> _live_pwr = 0;
+	this -> _smoothed_live_pwr = 0;
 	this -> _max_cur = 0;
-	this -> _updated = false; 
+	this -> _updated = false;
 	MicroTask.startTask(this);
 	StaticJsonDocument<128> event;
 	event["shaper"]  = 1;
@@ -118,20 +149,60 @@ void CurrentShaperTask::shapeCurrent() {
 	_updated = true;
 	// adding self produced energy to total
 	int max_pwr = _max_pwr;
+	// filtering live_pwr for getting out of pause
+	uint32_t updt_time = (millis() - _timer) / 1000;
+
+	int livepwr;
+	if (_pause_timer == 0) {
+		_smoothed_live_pwr = _live_pwr;
+		livepwr = _live_pwr;
+	}
+	else {
+		// Calculating the smoothing factor considering current interval.
+		if (_live_pwr > _smoothed_live_pwr) {
+			_smoothed_live_pwr = _live_pwr;
+		}
+		else {
+			DBUGVAR(updt_time);
+			DBUGVAR(current_shaper_smoothing_time);
+			double factor;
+			if (current_shaper_smoothing_time) {
+				if (current_shaper_smoothing_time < EVSE_SHAPER_MIN_FILTER) {
+						current_shaper_smoothing_time = EVSE_SHAPER_MIN_FILTER;
+				}
+				factor = 1 - exp((-1) * (updt_time / (current_shaper_smoothing_time)));
+			}
+			else {
+				// avoid divide by 0
+				factor = 1;
+			}
+			
+			DBUGVAR(factor);
+			_smoothed_live_pwr = (int)round((_live_pwr * factor) + (_smoothed_live_pwr * (1 - factor)));
+			DBUGVAR(_smoothed_live_pwr);
+		}
+		livepwr = _smoothed_live_pwr;
+	}
+
+	if (livepwr > _max_pwr) {
+		livepwr = max_pwr;
+	}
 	if (config_divert_enabled() == true) {
 		if (mqtt_solar != "") {
 			max_pwr += solar;
 		}		
 	}
 	 if(!config_threephase_enabled()) {
-		_max_cur = round(((max_pwr - _live_pwr) / evse.getVoltage()) + (evse.getAmps()));
+		_max_cur = abs(((max_pwr - livepwr) / evse.getVoltage()) + (evse.getAmps()));
 	 }
 		
 	else {
-		_max_cur = round(((max_pwr - _live_pwr) / evse.getVoltage() / 3) + (evse.getAmps()));
+		_max_cur = abs(((max_pwr - livepwr) / evse.getVoltage() / 3) + (evse.getAmps()));
 	}
-		
 
+	if (_max_cur > evse.getMaxConfiguredCurrent()) {
+		_max_cur = evse.getMaxConfiguredCurrent();
+	}
 
 	_changed = true; 
 }

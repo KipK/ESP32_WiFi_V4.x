@@ -5,9 +5,11 @@
 #ifndef EVSE_SHAPER_LOOP_TIME
 #define EVSE_SHAPER_LOOP_TIME 2000
 #endif 
-#ifndef EVSE_SHAPER_FAILSAFE_TIME
-#define EVSE_SHAPER_FAILSAFE_TIME 360000
-#endif 
+
+#ifndef EVSE_SHAPER_MIN_FILTER
+#define EVSE_SHAPER_MIN_FILTER 10 // 10 sec 
+#endif
+
 
 #include "emonesp.h"
 #include <MicroTasks.h>
@@ -27,9 +29,11 @@ class CurrentShaperTask: public MicroTasks::Task
     bool         _changed;
     int          _max_pwr;   // total current available from the grid
     int          _live_pwr;  // current available to EVSE
+    int          _smoothed_live_pwr; // filtered live power for getting out of pause only
     uint8_t      _chg_cur;   // calculated charge current to claim
     uint8_t      _max_cur;   // shaper calculated max current
     uint32_t     _timer;
+    uint32_t     _pause_timer;
     bool         _updated;
   
   protected:

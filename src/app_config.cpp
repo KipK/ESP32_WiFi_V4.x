@@ -91,6 +91,9 @@ uint32_t divert_min_charge_time;
 
 // Current Shaper settings
 uint32_t current_shaper_max_pwr;
+double   current_shaper_smoothing_time;
+uint32_t current_shaper_min_pause_time;   // in seconds
+uint32_t current_shaper_data_maxinterval; // in seconds
 
 // Tesla Client settings
 String tesla_access_token;
@@ -179,7 +182,10 @@ ConfigOpt *opts[] =
   new ConfigOptDefenition<uint32_t>(divert_min_charge_time, (10 * 60), "divert_min_charge_time", "dt"),
 
 // Current Shaper settings
-  new ConfigOptDefenition<uint32_t>(current_shaper_max_pwr, 0 , "current_shaper_max_pwr", "smp"),
+  new ConfigOptDefenition<uint32_t>(current_shaper_max_pwr, 0, "current_shaper_max_pwr", "smp"),
+  new ConfigOptDefenition<double>(current_shaper_smoothing_time, 0.05, "current_shaper_smoothing_time", "sst"),
+  new ConfigOptDefenition<uint32_t>(current_shaper_min_pause_time, 300, "current_shaper_min_pause_time", "spt"),
+  new ConfigOptDefenition<uint32_t>(current_shaper_data_maxinterval, 120, "current_shaper_data_maxinterval", "sdm"),
 
 // Tesla client settings
   new ConfigOptSecret(tesla_access_token, "", "tesla_access_token", "tat"),
